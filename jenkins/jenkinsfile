@@ -26,7 +26,7 @@ pipeline {
         GIT_USER  = "boutheynaaa"
         GIT_EMAIL = "boutheynahammami@gmail.com"
 
-        K8S_DIR   = "kubernetes-files"
+        K8S_DIR   = "k8s"
         YAML_FILE = "${SERVICE_NAME}.yaml"
     }
 
@@ -78,7 +78,7 @@ pipeline {
         stage('Update Kubernetes Manifest') {
             steps {
                 dir("${K8S_DIR}") {
-                    withCredentials([string(credentialsId: 'my-git-pattoken', variable: 'GIT_TOKEN')]) {
+                    withCredentials([string(credentialsId: 'mytoken', variable: 'GIT_TOKEN')]) {
 
                         sh '''
                             git config user.email "${GIT_EMAIL}"
