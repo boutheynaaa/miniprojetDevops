@@ -55,7 +55,7 @@ resource "aws_eks_cluster" "eks" {
   }
 
   tags = {
-    Name        = "MelCluster"
+    Name        = "MyCluster"
     Environment = "dev"
     Terraform   = "true"
   }
