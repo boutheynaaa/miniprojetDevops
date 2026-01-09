@@ -21,6 +21,7 @@ pipeline {
         GIT_USER       = "boutheynaaa"
         GIT_EMAIL      = "boutheynahammami@gmail.com"
         K8S_DIR        = "k8s"
+        EKS_CLUSTER    = "MyCluster"
     }
     stages {
         stage('Clean Workspace') {
@@ -116,25 +117,48 @@ pipeline {
                     // Get the deployment name based on service
                     def deploymentName = getDeploymentName(params.SERVICE_NAME)
                     
-                    sh """
-                        set -e
-                        echo "Deploying ${params.SERVICE_NAME} to Kubernetes..."
-                        
-                        # Apply the updated manifest
-                        kubectl apply -f ${K8S_DIR}/${params.SERVICE_NAME}.yaml
-                        
-                        # Wait for rollout to complete (only for deployments, not services)
-                        if [ "${deploymentName}" != "none" ]; then
-                            echo "Waiting for deployment ${deploymentName} to complete..."
+                    withCredentials([file(credentialsId: 'kubernetes-config', variable: 'KUBECONFIG')]) {
+                        sh """
+                            set -e
+                            
+                            echo "======================================"
+                            echo "Deploying ${params.SERVICE_NAME} to EKS"
+                            echo "Cluster: ${EKS_CLUSTER}"
+                            echo "Deployment: ${deploymentName}"
+                            echo "======================================"
+                            
+                            # Use the kubeconfig from credentials
+                            export KUBECONFIG=\${KUBECONFIG}
+                            
+                            # Verify kubectl connection
+                            echo "Verifying cluster connection..."
+                            kubectl cluster-info
+                            
+                            # Apply the updated manifest
+                            echo "Applying manifest: ${K8S_DIR}/${params.SERVICE_NAME}.yaml"
+                            kubectl apply -f ${K8S_DIR}/${params.SERVICE_NAME}.yaml
+                            
+                            # Wait for rollout to complete
+                            echo "Waiting for rollout of ${deploymentName}..."
                             kubectl rollout status deployment/${deploymentName} -n default --timeout=5m
                             
-                            # Show the current pods
-                            echo "Current pods:"
-                            kubectl get pods -l app=${deploymentName%-deployment} -n default
-                        fi
-                        
-                        echo "Deployment completed successfully!"
-                    """
+                            # Show deployment status
+                            echo "======================================"
+                            echo "Deployment Status:"
+                            kubectl get deployment ${deploymentName} -n default
+                            
+                            echo ""
+                            echo "Pods Status:"
+                            kubectl get pods -l app=${params.SERVICE_NAME.replace('service', '')}-service -n default
+                            
+                            echo ""
+                            echo "Service Status:"
+                            kubectl get svc -n default | grep ${params.SERVICE_NAME.replace('service', '')} || echo "No service found"
+                            echo "======================================"
+                            
+                            echo " Deployment completed successfully!"
+                        """
+                    }
                 }
             }
         }
@@ -144,15 +168,33 @@ pipeline {
         success {
             echo " Pipeline completed successfully for ${params.SERVICE_NAME}"
             script {
+                def deploymentName = getDeploymentName(params.SERVICE_NAME)
                 sh """
-                    echo "=== Deployment Summary ==="
-                    kubectl get pods -n default | grep ${params.SERVICE_NAME%-service} || true
-                    kubectl get svc -n default | grep ${params.SERVICE_NAME%-service} || true
+                    echo ""
+                    echo "=== DEPLOYMENT SUMMARY ==="
+                    echo "Service: ${params.SERVICE_NAME}"
+                    echo "Build: ${BUILD_NUMBER}"
+                    echo "Image: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${params.SERVICE_NAME}:${BUILD_NUMBER}"
+                    echo ""
+                    kubectl get pods -l app=${params.SERVICE_NAME.replace('service', '')}-service -n default -o wide || true
+                    echo "=========================="
                 """
             }
         }
         failure {
             echo " Pipeline failed for ${params.SERVICE_NAME}"
+            script {
+                sh """
+                    echo ""
+                    echo "=== DEBUGGING INFO ==="
+                    echo "Checking kubectl access..."
+                    kubectl version --client || echo "kubectl not found"
+                    echo ""
+                    echo "Checking AWS credentials..."
+                    aws sts get-caller-identity || echo "AWS credentials issue"
+                    echo "======================"
+                """
+            }
         }
         always {
             sh 'docker system prune -f || true'
@@ -170,5 +212,5 @@ def getDeploymentName(serviceName) {
         'paymentservice': 'payment-deployment',
         'postgresservice': 'postgres-deployment'
     ]
-    return deploymentMap[serviceName] ?: 'none'
+    return deploymentMap[serviceName] ?: 'unknown-deployment'
 }
