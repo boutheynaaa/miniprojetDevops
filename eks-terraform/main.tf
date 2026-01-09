@@ -27,8 +27,14 @@ data "aws_vpc" "main" {
 }
 
 # Make sure these subnets are public (MapPublicIpOnLaunch = true)
-data "aws_subnet" "subnet-1" { id = "subnet-0260180dfad65bd2d" } # 10.0.1.0/24 us-east-1a
-data "aws_subnet" "subnet-2" { id = "subnet-05165519cc5b0da2f" } # 10.0.2.0/24 us-east-1b
+data "aws_subnet" "subnet-1" { 
+  id = "subnet-0260180dfad65bd2d"  # public subnet in us-east-1a
+} 
+
+data "aws_subnet" "subnet-2" { 
+  id = "subnet-05165519cc5b0da2f"  # public subnet in us-east-1b
+} 
+
 
 
 # Security group in the same VPC
