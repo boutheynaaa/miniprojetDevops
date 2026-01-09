@@ -19,7 +19,8 @@ data "aws_iam_role" "worker" {
 # ----------------------------
 data "aws_vpc" "main" {
   tags = {
-    Name = "Lab-VPC"
+      name   = "tag:Name"
+      values = ["Lab-VPC"]
   }
 }
 
@@ -43,7 +44,7 @@ data "aws_security_group" "selected" {
   vpc_id = data.aws_vpc.main.id
   filter {
     name   = "tag:Name"
-    values = ["Jumphost-sg"]
+    values = ["Lab-SG"]
   }
 }
 
@@ -51,7 +52,7 @@ data "aws_security_group" "selected" {
 # EKS Cluster
 # ----------------------------
 resource "aws_eks_cluster" "eks" {
-  name     = "MelCluster"
+  name     = "Cluster"
   role_arn = data.aws_iam_role.master.arn
 
   vpc_config {
@@ -60,7 +61,7 @@ resource "aws_eks_cluster" "eks" {
   }
 
   tags = {
-    Name        = "MelCluster"
+    Name        = "Cluster"
     Environment = "dev"
     Terraform   = "true"
   }
@@ -76,7 +77,7 @@ resource "aws_eks_node_group" "node-grp" {
   subnet_ids      = [data.aws_subnet.subnet-1.id, data.aws_subnet.subnet-2.id]
   capacity_type   = "ON_DEMAND"
   disk_size       = 20
-  instance_types  = ["t2.large"]
+  instance_types  = ["t2.medium"]
 
   scaling_config {
     desired_size = 3
