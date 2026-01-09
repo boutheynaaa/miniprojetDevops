@@ -8,8 +8,7 @@ pipeline {
                 'orderservice',
                 'inventoryservice',
                 'gatewayservice',
-                'paymentservice',
-                'postgresservice'
+                'paymentservice'
             ],
             description: 'Select the microservice to build and deploy'
         )
