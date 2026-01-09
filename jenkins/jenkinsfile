@@ -73,7 +73,7 @@ pipeline {
         stage('Update Kubernetes Manifest') {
             steps {
                 dir("${K8S_DIR}") {
-                    withCredentials([string(credentialsId: 'mytokenn', variable: 'GITHUB_TOKEN')]) {
+                    withCredentials([string(credentialsId: 'mytoken', variable: 'GITHUB_TOKEN')]) {
                         sh '''
                             set -e
                             ECR_URI=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${SERVICE_NAME}
