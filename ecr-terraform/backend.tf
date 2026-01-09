@@ -7,7 +7,7 @@ terraform {
   }
  
   backend "s3" {
-    bucket = "ml-terraform-state-8749f2b4"  # ← Changé ici
+    bucket = ml-terraform-state-ff024e5a"  # ← Changé ici
     key    = "ecr/terraform.tfstate"
     region = "us-east-1"
   }
