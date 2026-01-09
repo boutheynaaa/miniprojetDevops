@@ -1,98 +1,113 @@
 pipeline {
     agent any
-
     parameters {
         choice(
             name: 'SERVICE_NAME',
             choices: [
-                'product',
-                'order',
-                'inventory',
-                'gateway',
-                'payment'
+                'productservice',
+                'orderservice',
+                'inventoryservice',
+                'gatewayservice',
+                'paymentservice'
             ],
             description: 'Select the microservice to build and deploy'
         )
     }
-
     environment {
         AWS_REGION     = "us-east-1"
         AWS_ACCOUNT_ID = "851725399330"
-
-        ECR_REPO = "${SERVICE_NAME}"
-        ECR_URI  = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${SERVICE_NAME}"
-
         GIT_REPO  = "miniprojetDevops"
         GIT_USER  = "boutheynaaa"
         GIT_EMAIL = "boutheynahammami@gmail.com"
-
         K8S_DIR   = "k8s"
-        YAML_FILE = "${SERVICE_NAME}.yaml"
     }
-
     stages {
-
         stage('Clean Workspace') {
             steps {
                 cleanWs()
             }
         }
-
         stage('Checkout from Git') {
             steps {
                 git branch: 'main',
                     url: "https://github.com/${GIT_USER}/${GIT_REPO}.git"
             }
         }
-
         stage('Build Docker Image') {
             steps {
-                dir("${SERVICE_NAME}") {
+                dir("${params.SERVICE_NAME}") {
                     sh '''
                         echo "Building Docker image for ${SERVICE_NAME}"
                         docker system prune -f
-                        docker build -t ${ECR_REPO}:latest .
+                        docker build -t ${SERVICE_NAME}:latest .
                     '''
                 }
             }
         }
-
         stage('Login to ECR') {
             steps {
                 sh '''
-                    aws ecr get-login-password --region ${AWS_REGION} |
-                    docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
+                    aws ecr get-login-password --region ${AWS_REGION} | \
+                    docker login --username AWS --password-stdin \
+                    ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
                 '''
             }
         }
-
         stage('Tag & Push Image to ECR') {
             steps {
                 sh '''
-                    docker tag ${ECR_REPO}:latest ${ECR_URI}:${BUILD_NUMBER}
+                    ECR_URI=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${SERVICE_NAME}
+                    docker tag ${SERVICE_NAME}:latest ${ECR_URI}:${BUILD_NUMBER}
                     docker push ${ECR_URI}:${BUILD_NUMBER}
                 '''
             }
         }
-
         stage('Update Kubernetes Manifest') {
             steps {
                 dir("${K8S_DIR}") {
-                    withCredentials([string(credentialsId: 'mytoken', variable: 'GIT_TOKEN')]) {
-
+                    withCredentials([string(credentialsId: 'mytoken', variable: 'GITHUB_TOKEN')]) {
                         sh '''
+                            set -e
+                            
+                            ECR_URI=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${SERVICE_NAME}
+                            YAML_FILE=${SERVICE_NAME}.yaml
+                            
+                            # Configure git
                             git config user.email "${GIT_EMAIL}"
                             git config user.name "${GIT_USER}"
-
-                            sed -i "s|image:.*|image: ${ECR_URI}:${BUILD_NUMBER}|g" ${YAML_FILE}
-
+                            
+                            # Update image in YAML
+                            sed -i "s|image: .*${SERVICE_NAME}.*|image: ${ECR_URI}:${BUILD_NUMBER}|g" ${YAML_FILE}
+                            
+                            # Stage changes
                             git add ${YAML_FILE}
-                            git commit -m "Update ${SERVICE_NAME} image to ${BUILD_NUMBER}"
-                            git push https://${GIT_TOKEN}@github.com/${GIT_USER}/${GIT_REPO}.git main
+                            
+                            # Commit if there are changes
+                            if git diff --staged --quiet; then
+                                echo "No changes to commit"
+                            else
+                                git commit -m "Update ${SERVICE_NAME} image to build ${BUILD_NUMBER} [skip ci]"
+                                
+                                # Push with token - use the correct remote format
+                                git push https://${GITHUB_TOKEN}@github.com/${GIT_USER}/${GIT_REPO}.git HEAD:main
+                                
+                                echo "Successfully updated ${YAML_FILE}"
+                            fi
                         '''
                     }
                 }
             }
+        }
+    }
+    post {
+        success {
+            echo "✅ Pipeline completed successfully for ${params.SERVICE_NAME}"
+        }
+        failure {
+            echo "❌ Pipeline failed for ${params.SERVICE_NAME}"
+        }
+        always {
+            sh 'docker system prune -f || true'
         }
     }
 }
