@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
       - name: gateway-service
-        image: 851725399330.dkr.ecr.us-east-1.amazonaws.com/gatewayservice:1
+        image: 851725399330.dkr.ecr.us-east-1.amazonaws.com/gatewayservice:28
         ports:
         - containerPort: 80
 ---
