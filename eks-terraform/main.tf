@@ -27,13 +27,9 @@ data "aws_vpc" "main" {
 }
 
 # Make sure these subnets are public (MapPublicIpOnLaunch = true)
-data "aws_subnet" "subnet-1" {
-  id = "subnet-0260180dfad65bd2d" # us-east-1a
-}
+data "aws_subnet" "subnet-1" { id = "subnet-0260180dfad65bd2d" } # 10.0.1.0/24 us-east-1a
+data "aws_subnet" "subnet-2" { id = "subnet-05165519cc5b0da2f" } # 10.0.2.0/24 us-east-1b
 
-data "aws_subnet" "subnet-2" {
-  id = "subnet-0a38e9ba68f3e1bfb" # us-east-1b
-}
 
 # Security group in the same VPC
 data "aws_security_group" "selected" {
@@ -48,7 +44,7 @@ data "aws_security_group" "selected" {
 # EKS Cluster
 # ----------------------------
 resource "aws_eks_cluster" "eks" {
-  name     = "MelCluster"
+  name     = "MyCluster"
   role_arn = data.aws_iam_role.master.arn
 
   vpc_config {
