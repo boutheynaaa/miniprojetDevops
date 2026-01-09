@@ -8,7 +8,8 @@ pipeline {
                 'orderservice',
                 'inventoryservice',
                 'gatewayservice',
-                'paymentservice'
+                'paymentservice',
+                'postgresservice'
             ],
             description: 'Select the microservice to build and deploy'
         )
@@ -19,7 +20,7 @@ pipeline {
         GIT_REPO  = "miniprojetDevops"
         GIT_USER  = "boutheynaaa"
         GIT_EMAIL = "boutheynahammami@gmail.com"
-        K8S_DIR   = "k8s"
+        K8S_DIR = "k8s"  // Changed from kubernetes-files to k8s
     }
     stages {
         stage('Clean Workspace') {
@@ -35,18 +36,25 @@ pipeline {
         }
         stage('Build Docker Image') {
             steps {
-                dir("${params.SERVICE_NAME}") {
-                    sh '''
-                        echo "Building Docker image for ${SERVICE_NAME}"
-                        docker system prune -f
-                        docker build -t ${SERVICE_NAME}:latest .
-                    '''
+                script {
+                    // Determine the correct directory path based on service name
+                    def serviceDir = "${params.SERVICE_NAME}"
+                    
+                    dir(serviceDir) {
+                        sh '''
+                            set -e
+                            echo "Building Docker image for ${SERVICE_NAME}"
+                            docker system prune -f
+                            docker build -t ${SERVICE_NAME}:latest .
+                        '''
+                    }
                 }
             }
         }
         stage('Login to ECR') {
             steps {
                 sh '''
+                    set -e
                     aws ecr get-login-password --region ${AWS_REGION} | \
                     docker login --username AWS --password-stdin \
                     ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
@@ -56,6 +64,7 @@ pipeline {
         stage('Tag & Push Image to ECR') {
             steps {
                 sh '''
+                    set -e
                     ECR_URI=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${SERVICE_NAME}
                     docker tag ${SERVICE_NAME}:latest ${ECR_URI}:${BUILD_NUMBER}
                     docker push ${ECR_URI}:${BUILD_NUMBER}
@@ -65,10 +74,9 @@ pipeline {
         stage('Update Kubernetes Manifest') {
             steps {
                 dir("${K8S_DIR}") {
-                    withCredentials([string(credentialsId: 'mytoken', variable: 'GITHUB_TOKEN')]) {
+                    withCredentials([string(credentialsId: 'mytoken', variable: 'GIT_TOKEN')]) {
                         sh '''
                             set -e
-                            
                             ECR_URI=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${SERVICE_NAME}
                             YAML_FILE=${SERVICE_NAME}.yaml
                             
@@ -76,23 +84,16 @@ pipeline {
                             git config user.email "${GIT_EMAIL}"
                             git config user.name "${GIT_USER}"
                             
-                            # Update image in YAML
-                            sed -i "s|image: .*${SERVICE_NAME}.*|image: ${ECR_URI}:${BUILD_NUMBER}|g" ${YAML_FILE}
+                            # Pull latest changes to avoid conflicts
+                            git pull origin main
                             
-                            # Stage changes
+                            # Update the image in the YAML file
+                            sed -i "s|image:.*${SERVICE_NAME}.*|image: ${ECR_URI}:${BUILD_NUMBER}|g" ${YAML_FILE}
+                            
+                            # Commit and push changes
                             git add ${YAML_FILE}
-                            
-                            # Commit if there are changes
-                            if git diff --staged --quiet; then
-                                echo "No changes to commit"
-                            else
-                                git commit -m "Update ${SERVICE_NAME} image to build ${BUILD_NUMBER} [skip ci]"
-                                
-                                # Push with token - use the correct remote format
-                                git push https://${GITHUB_TOKEN}@github.com/${GIT_USER}/${GIT_REPO}.git HEAD:main
-                                
-                                echo "Successfully updated ${YAML_FILE}"
-                            fi
+                            git commit -m "Update ${SERVICE_NAME} image to build ${BUILD_NUMBER}" || echo "No changes to commit"
+                            git push https://${GIT_TOKEN}@github.com/${GIT_USER}/${GIT_REPO}.git main
                         '''
                     }
                 }
@@ -101,10 +102,10 @@ pipeline {
     }
     post {
         success {
-            echo "✅ Pipeline completed successfully for ${params.SERVICE_NAME}"
+            echo "Pipeline completed successfully for ${params.SERVICE_NAME}"
         }
         failure {
-            echo "❌ Pipeline failed for ${params.SERVICE_NAME}"
+            echo "Pipeline failed for ${params.SERVICE_NAME}"
         }
         always {
             sh 'docker system prune -f || true'
