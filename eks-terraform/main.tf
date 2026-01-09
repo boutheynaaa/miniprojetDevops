@@ -1,10 +1,12 @@
+# ----------------------------
 # Provider
+# ----------------------------
 provider "aws" {
   region = "us-east-1"
 }
 
 # ----------------------------
-# IAM Roles existants (LabRole)
+# IAM Roles (already exist)
 # ----------------------------
 data "aws_iam_role" "master" {
   name = "LabRole"
@@ -15,7 +17,7 @@ data "aws_iam_role" "worker" {
 }
 
 # ----------------------------
-# VPC et Subnets PUBLICS
+# VPC and Public Subnets
 # ----------------------------
 data "aws_vpc" "main" {
   filter {
@@ -24,7 +26,7 @@ data "aws_vpc" "main" {
   }
 }
 
-# Utilisation des SUBNETS PUBLICS (ceux avec MapPublicIpOnLaunch = True)
+# Make sure these subnets are public (MapPublicIpOnLaunch = true)
 data "aws_subnet" "subnet-1" {
   id = "subnet-0260180dfad65bd2d" # us-east-1a
 }
@@ -33,7 +35,7 @@ data "aws_subnet" "subnet-2" {
   id = "subnet-0a38e9ba68f3e1bfb" # us-east-1b
 }
 
-
+# Security group in the same VPC
 data "aws_security_group" "selected" {
   vpc_id = data.aws_vpc.main.id
   filter {
@@ -68,7 +70,7 @@ resource "aws_eks_cluster" "eks" {
 # ----------------------------
 resource "aws_eks_node_group" "node-grp" {
   cluster_name    = aws_eks_cluster.eks.name
-  node_group_name = var.node_group_name
+  node_group_name = "eks-node-group"
   node_role_arn   = data.aws_iam_role.worker.arn
   subnet_ids      = [data.aws_subnet.subnet-1.id, data.aws_subnet.subnet-2.id]
   
