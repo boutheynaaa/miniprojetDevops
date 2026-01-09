@@ -20,7 +20,7 @@ pipeline {
         GIT_REPO  = "miniprojetDevops"
         GIT_USER  = "boutheynaaa"
         GIT_EMAIL = "boutheynahammami@gmail.com"
-        K8S_DIR = "k8s"  // Changed from kubernetes-files to k8s
+        K8S_DIR = "k8s"
     }
     stages {
         stage('Clean Workspace') {
@@ -37,7 +37,6 @@ pipeline {
         stage('Build Docker Image') {
             steps {
                 script {
-                    // Determine the correct directory path based on service name
                     def serviceDir = "${params.SERVICE_NAME}"
                     
                     dir(serviceDir) {
@@ -74,7 +73,7 @@ pipeline {
         stage('Update Kubernetes Manifest') {
             steps {
                 dir("${K8S_DIR}") {
-                    withCredentials([string(credentialsId: 'mytoken', variable: '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')]) {
+                    withCredentials([string(credentialsId: 'mytokenn', variable: 'GITHUB_TOKEN')]) {
                         sh '''
                             set -e
                             ECR_URI=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${SERVICE_NAME}
@@ -84,16 +83,22 @@ pipeline {
                             git config user.email "${GIT_EMAIL}"
                             git config user.name "${GIT_USER}"
                             
-                            # Pull latest changes to avoid conflicts
+                            # Pull latest changes
                             git pull origin main
                             
                             # Update the image in the YAML file
                             sed -i "s|image:.*${SERVICE_NAME}.*|image: ${ECR_URI}:${BUILD_NUMBER}|g" ${YAML_FILE}
                             
-                            # Commit and push changes
-                            git add ${YAML_FILE}
-                            git commit -m "Update ${SERVICE_NAME} image to build ${BUILD_NUMBER}" || echo "No changes to commit"
-                            git push https://${GIT_TOKEN}@github.com/${GIT_USER}/${GIT_REPO}.git main
+                            # Check for changes
+                            if git diff --exit-code ${YAML_FILE}; then
+                                echo "No changes detected in ${YAML_FILE}"
+                            else
+                                # Commit and push changes
+                                git add ${YAML_FILE}
+                                git commit -m "Update ${SERVICE_NAME} image to build ${BUILD_NUMBER} [skip ci]"
+                                git push https://${GITHUB_TOKEN}@github.com/${GIT_USER}/${GIT_REPO}.git HEAD:main
+                                echo "Successfully pushed changes"
+                            fi
                         '''
                     }
                 }
@@ -102,10 +107,10 @@ pipeline {
     }
     post {
         success {
-            echo "Pipeline completed successfully for ${params.SERVICE_NAME}"
+            echo " Pipeline completed successfully for ${params.SERVICE_NAME}"
         }
         failure {
-            echo "Pipeline failed for ${params.SERVICE_NAME}"
+            echo " Pipeline failed for ${params.SERVICE_NAME}"
         }
         always {
             sh 'docker system prune -f || true'
