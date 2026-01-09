@@ -26,11 +26,11 @@ data "aws_vpc" "main" {
 
 # Utilisation des SUBNETS PUBLICS (ceux avec MapPublicIpOnLaunch = True)
 data "aws_subnet" "subnet-1" {
-  id = "subnet-0260180dfad65bd2d"  # example: 10.0.1.0/24, us-east-1a
+  id = "subnet-0260180dfad65bd2d" # us-east-1a
 }
 
 data "aws_subnet" "subnet-2" {
-  id = "subnet-0b2f8b22bbd913fd4"  # example: 10.0.3.0/24, us-east-1a
+  id = "subnet-0a38e9ba68f3e1bfb" # us-east-1b
 }
 
 
