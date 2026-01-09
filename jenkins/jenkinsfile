@@ -111,3 +111,6 @@ pipeline {
         }
         failure {
             echo " Pipeline failed for ${params.SERVICE_NAME}"
+        }
+    }
+}
