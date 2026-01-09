@@ -105,19 +105,36 @@ EOF
                         echo ""
                         echo "🌍 AWS Region: $AWS_DEFAULT_REGION"
                         echo ""
+                        echo "⚠️  State Management: LOCAL (S3 blocked in AWS Academy)"
+                        echo "📁 State File: ./terraform.tfstate"
+                        echo ""
                         echo "======================================"
                     '''
                 }
             }
         }
 
-        stage('Verify S3 Bucket') {
+        stage('Remove S3 Backend') {
             steps {
-                sh '''
-                    echo "🪣 Verifying S3 bucket access..."
-                    aws s3 ls s3://my-terraform-state-boutheyna/ || echo "⚠️  Bucket exists but may be empty"
-                    echo "✅ S3 bucket verified"
-                '''
+                dir('eks-terraform') {
+                    sh '''
+                        echo "🧹 Removing S3 backend configuration..."
+                        
+                        # Remove backend.tf if it exists
+                        if [ -f "backend.tf" ]; then
+                            echo "  ✗ Found backend.tf - removing it"
+                            rm -f backend.tf
+                        else
+                            echo "  ✓ No backend.tf found (good!)"
+                        fi
+                        
+                        # Clean up any previous terraform state
+                        rm -rf .terraform
+                        rm -f .terraform.lock.hcl
+                        
+                        echo "✅ Ready for local state"
+                    '''
+                }
             }
         }
 
@@ -125,9 +142,9 @@ EOF
             steps {
                 dir('eks-terraform') {
                     sh '''
-                        echo "🔄 Initializing Terraform with S3 backend..."
-                        terraform init -reconfigure
-                        echo "✅ Terraform initialized successfully"
+                        echo "🔄 Initializing Terraform with LOCAL backend..."
+                        terraform init
+                        echo "✅ Terraform initialized with local state"
                     '''
                 }
             }
@@ -263,12 +280,18 @@ EOF
             }
         }
 
-        stage('Verify State in S3') {
+        stage('Backup State File') {
             steps {
-                sh '''
-                    echo "💾 Verifying state file in S3..."
-                    aws s3 ls s3://my-terraform-state-boutheyna/eks/ || echo "State location"
-                '''
+                dir('eks-terraform') {
+                    script {
+                        // Archive the state file for backup
+                        if (fileExists('terraform.tfstate')) {
+                            echo "💾 Backing up Terraform state file..."
+                            archiveArtifacts artifacts: 'terraform.tfstate', allowEmptyArchive: true
+                            echo "✅ State file archived (can be restored from build artifacts)"
+                        }
+                    }
+                }
             }
         }
     }
@@ -302,8 +325,7 @@ EOF
                     echo "     kubectl get nodes"
                     echo "     kubectl get pods -A"
                     echo ""
-                    echo "  3. State stored in:"
-                    echo "     s3://my-terraform-state-boutheyna/eks/terraform.tfstate"
+                    echo "  3. State file backed up in build artifacts"
                     echo ""
                 } else {
                     echo "✅ SUCCESS: EKS cluster destroyed!"
@@ -320,7 +342,7 @@ EOF
             echo ""
             echo "Common issues:"
             echo ""
-            echo "  ✗ AWS Credentials invalid or expired"
+            echo "  ✗ AWS Credentials expired"
             echo "    → Update credentials in Jenkins:"
             echo "    → Manage Jenkins → Credentials"
             echo ""
@@ -329,6 +351,10 @@ EOF
             echo ""
             echo "  ✗ VPC/Subnet/SG not found"
             echo "    → Verify names in AWS Console"
+            echo "    → Lab-VPC, Public-Subnet-1, Public-Subnet-2, Jumphost-sg"
+            echo ""
+            echo "  ✗ IAM permissions"
+            echo "    → Verify LabRole has EKS permissions"
             echo ""
             echo "📋 Check the build logs above for details"
             echo "======================================"
