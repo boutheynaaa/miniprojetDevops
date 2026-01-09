@@ -1,6 +1,5 @@
 pipeline {
     agent any
-    
     parameters {
         choice(
             name: 'SERVICE_NAME',
@@ -15,91 +14,26 @@ pipeline {
             description: 'Select the microservice to build and deploy'
         )
     }
-    
     environment {
         AWS_REGION     = "us-east-1"
         AWS_ACCOUNT_ID = "851725399330"
-        GIT_REPO       = "miniprojetDevops"
-        GIT_USER       = "boutheynaaa"
-        GIT_EMAIL      = "boutheynahammami@gmail.com"
-        K8S_DIR        = "k8s"
-        EKS_CLUSTER    = "MyCluster"
-        NODE_GROUP     = "eks-node-group"
+        GIT_REPO  = "miniprojetDevops"
+        GIT_USER  = "boutheynaaa"
+        GIT_EMAIL = "boutheynahammami@gmail.com"
+        K8S_DIR = "k8s"
     }
-    
     stages {
-        stage('Verify EKS Prerequisites') {
-            steps {
-                script {
-                    echo "======================================"
-                    echo "Verifying EKS cluster prerequisites..."
-                    echo "======================================"
-                    
-                    sh '''
-                        set -e
-                        
-                        # Check AWS credentials
-                        echo "Checking AWS credentials..."
-                        aws sts get-caller-identity
-                        
-                        # Check if cluster exists
-                        echo ""
-                        echo "Checking EKS cluster status..."
-                        CLUSTER_STATUS=$(aws eks describe-cluster --name ${EKS_CLUSTER} --region ${AWS_REGION} --query 'cluster.status' --output text)
-                        echo "Cluster Status: ${CLUSTER_STATUS}"
-                        
-                        if [ "${CLUSTER_STATUS}" != "ACTIVE" ]; then
-                            echo "ERROR: Cluster is not ACTIVE!"
-                            exit 1
-                        fi
-                        
-                        # Check node group
-                        echo ""
-                        echo "Checking node group..."
-                        NODE_COUNT=$(aws eks describe-nodegroup \
-                            --cluster-name ${EKS_CLUSTER} \
-                            --nodegroup-name ${NODE_GROUP} \
-                            --region ${AWS_REGION} \
-                            --query 'nodegroup.scalingConfig.desiredSize' \
-                            --output text)
-                        
-                        echo "Current desired node count: ${NODE_COUNT}"
-                        
-                        if [ "${NODE_COUNT}" -eq 0 ]; then
-                            echo ""
-                            echo " WARNING: Node group is scaled to 0!"
-                            echo "Scaling up node group to 2 nodes..."
-                            
-                            aws eks update-nodegroup-config \
-                                --cluster-name ${EKS_CLUSTER} \
-                                --nodegroup-name ${NODE_GROUP} \
-                                --scaling-config desiredSize=2,minSize=1,maxSize=3 \
-                                --region ${AWS_REGION}
-                            
-                            echo "Waiting 3 minutes for nodes to become ready..."
-                            sleep 180
-                        fi
-                        
-                        echo ""
-                        echo "Prerequisites check passed!"
-                    '''
-                }
-            }
-        }
-        
         stage('Clean Workspace') {
             steps {
                 cleanWs()
             }
         }
-        
         stage('Checkout from Git') {
             steps {
                 git branch: 'main',
                     url: "https://github.com/${GIT_USER}/${GIT_REPO}.git"
             }
         }
-        
         stage('Build Docker Image') {
             steps {
                 script {
@@ -108,48 +42,34 @@ pipeline {
                     dir(serviceDir) {
                         sh '''
                             set -e
-                            echo "======================================"
                             echo "Building Docker image for ${SERVICE_NAME}"
-                            echo "======================================"
                             docker system prune -f
                             docker build -t ${SERVICE_NAME}:latest .
-                            echo " Docker image built successfully"
                         '''
                     }
                 }
             }
         }
-        
         stage('Login to ECR') {
             steps {
                 sh '''
                     set -e
-                    echo "Logging in to AWS ECR..."
                     aws ecr get-login-password --region ${AWS_REGION} | \
                     docker login --username AWS --password-stdin \
                     ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
-                    echo " ECR login successful"
                 '''
             }
         }
-        
         stage('Tag & Push Image to ECR') {
             steps {
                 sh '''
                     set -e
                     ECR_URI=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${SERVICE_NAME}
-                    
-                    echo "Tagging image as ${ECR_URI}:${BUILD_NUMBER}"
                     docker tag ${SERVICE_NAME}:latest ${ECR_URI}:${BUILD_NUMBER}
-                    
-                    echo "Pushing image to ECR..."
                     docker push ${ECR_URI}:${BUILD_NUMBER}
-                    
-                    echo "Image pushed successfully to ECR"
                 '''
             }
         }
-        
         stage('Update Kubernetes Manifest') {
             steps {
                 dir("${K8S_DIR}") {
@@ -158,10 +78,6 @@ pipeline {
                             set -e
                             ECR_URI=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${SERVICE_NAME}
                             YAML_FILE=${SERVICE_NAME}.yaml
-                            
-                            echo "======================================"
-                            echo "Updating Kubernetes manifest..."
-                            echo "======================================"
                             
                             # Configure git
                             git config user.email "${GIT_EMAIL}"
@@ -175,246 +91,23 @@ pipeline {
                             
                             # Check for changes
                             if git diff --exit-code ${YAML_FILE}; then
-                                echo "  No changes detected in ${YAML_FILE}"
+                                echo "No changes detected in ${YAML_FILE}"
                             else
                                 # Commit and push changes
                                 git add ${YAML_FILE}
                                 git commit -m "Update ${SERVICE_NAME} image to build ${BUILD_NUMBER} [skip ci]"
                                 git push https://${GITHUB_TOKEN}@github.com/${GIT_USER}/${GIT_REPO}.git HEAD:main
-                                echo " Successfully pushed manifest changes to Git"
+                                echo "Successfully pushed changes to GitHub"
                             fi
                         '''
                     }
                 }
             }
         }
-        
-        stage('Verify Cluster Connectivity') {
-            steps {
-                withCredentials([file(credentialsId: 'kubernetes-config', variable: 'KUBECONFIG')]) {
-                    sh '''
-                        set -e
-                        export KUBECONFIG=${KUBECONFIG}
-                        
-                        echo "======================================"
-                        echo "Verifying cluster connectivity..."
-                        echo "======================================"
-                        
-                        # Test connection
-                        kubectl cluster-info
-                        
-                        # Check nodes
-                        echo ""
-                        echo "Checking cluster nodes..."
-                        NODE_COUNT=$(kubectl get nodes --no-headers | wc -l)
-                        echo "Available nodes: ${NODE_COUNT}"
-                        
-                        if [ "${NODE_COUNT}" -eq 0 ]; then
-                            echo " ERROR: No nodes available in cluster!"
-                            echo "Please scale up the node group and try again."
-                            exit 1
-                        fi
-                        
-                        kubectl get nodes
-                        echo ""
-                        echo "Cluster connectivity verified"
-                    '''
-                }
-            }
-        }
-        
-        stage('Deploy to Kubernetes') {
-            steps {
-                script {
-                    def deploymentName = getDeploymentName(params.SERVICE_NAME)
-                    
-                    withCredentials([file(credentialsId: 'kubernetes-config', variable: 'KUBECONFIG')]) {
-                        sh """
-                            set -e
-                            export KUBECONFIG=\${KUBECONFIG}
-                            
-                            echo "======================================"
-                            echo "Deploying ${params.SERVICE_NAME} to EKS"
-                            echo "Cluster: ${EKS_CLUSTER}"
-                            echo "Deployment: ${deploymentName}"
-                            echo "======================================"
-                            
-                            # Apply the updated manifest
-                            echo "Applying manifest: ${K8S_DIR}/${params.SERVICE_NAME}.yaml"
-                            kubectl apply -f ${K8S_DIR}/${params.SERVICE_NAME}.yaml
-                            
-                            # Wait for rollout to complete
-                            echo ""
-                            echo "Waiting for rollout of ${deploymentName}..."
-                            if kubectl rollout status deployment/${deploymentName} -n default --timeout=5m; then
-                                echo " Rollout completed successfully"
-                            else
-                                echo "Rollout failed or timed out"
-                                echo ""
-                                echo "Pod status:"
-                                kubectl get pods -l app=${params.SERVICE_NAME.replace('service', '')}-service -n default
-                                echo ""
-                                echo "Recent pod events:"
-                                kubectl get events -n default --sort-by='.lastTimestamp' | tail -20
-                                exit 1
-                            fi
-                            
-                            # Show deployment status
-                            echo ""
-                            echo "======================================"
-                            echo "Deployment Status:"
-                            kubectl get deployment ${deploymentName} -n default
-                            
-                            echo ""
-                            echo "Pods Status:"
-                            kubectl get pods -l app=${params.SERVICE_NAME.replace('service', '')}-service -n default
-                            
-                            echo ""
-                            echo "Service Status:"
-                            kubectl get svc -n default | grep ${params.SERVICE_NAME.replace('service', '')} || echo "  No service found (this is normal for some deployments)"
-                            echo "======================================"
-                            
-                            echo ""
-                            echo " Deployment completed successfully!"
-                        """
-                    }
-                }
-            }
-        }
-        
-        stage('Health Check') {
-            steps {
-                script {
-                    def deploymentName = getDeploymentName(params.SERVICE_NAME)
-                    
-                    withCredentials([file(credentialsId: 'kubernetes-config', variable: 'KUBECONFIG')]) {
-                        sh """
-                            set -e
-                            export KUBECONFIG=\${KUBECONFIG}
-                            
-                            echo "======================================"
-                            echo "Running health checks..."
-                            echo "======================================"
-                            
-                            # Get pod names
-                            PODS=\$(kubectl get pods -l app=${params.SERVICE_NAME.replace('service', '')}-service -n default -o jsonpath='{.items[*].metadata.name}')
-                            
-                            if [ -z "\${PODS}" ]; then
-                                echo " No pods found for ${params.SERVICE_NAME}"
-                                exit 1
-                            fi
-                            
-                            # Check pod status
-                            for POD in \${PODS}; do
-                                echo ""
-                                echo "Checking pod: \${POD}"
-                                
-                                STATUS=\$(kubectl get pod \${POD} -n default -o jsonpath='{.status.phase}')
-                                READY=\$(kubectl get pod \${POD} -n default -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}')
-                                
-                                echo "  Status: \${STATUS}"
-                                echo "  Ready: \${READY}"
-                                
-                                if [ "\${STATUS}" != "Running" ] || [ "\${READY}" != "True" ]; then
-                                    echo ""
-                                    echo " Pod is not healthy. Showing logs:"
-                                    kubectl logs \${POD} -n default --tail=50 || echo "Could not retrieve logs"
-                                    echo ""
-                                    echo "Pod description:"
-                                    kubectl describe pod \${POD} -n default | tail -30
-                                fi
-                            done
-                            
-                            echo ""
-                            echo " Health check completed"
-                        """
-                    }
-                }
-            }
-        }
     }
-    
     post {
         success {
-            script {
-                def deploymentName = getDeploymentName(params.SERVICE_NAME)
-                
-                withCredentials([file(credentialsId: 'kubernetes-config', variable: 'KUBECONFIG')]) {
-                    sh """
-                        export KUBECONFIG=\${KUBECONFIG}
-                        
-                        echo ""
-                        echo "======================================"
-                        echo "DEPLOYMENT SUCCESSFUL"
-                        echo "======================================"
-                        echo "Service: ${params.SERVICE_NAME}"
-                        echo "Build: ${BUILD_NUMBER}"
-                        echo "Image: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${params.SERVICE_NAME}:${BUILD_NUMBER}"
-                        echo ""
-                        echo "Current pods:"
-                        kubectl get pods -l app=${params.SERVICE_NAME.replace('service', '')}-service -n default -o wide 2>/dev/null || echo "Could not retrieve pod information"
-                        echo "======================================"
-                    """
-                }
-            }
+            echo " Pipeline completed successfully for ${params.SERVICE_NAME}"
         }
-        
         failure {
-            script {
-                withCredentials([file(credentialsId: 'kubernetes-config', variable: 'KUBECONFIG')]) {
-                    sh """
-                        export KUBECONFIG=\${KUBECONFIG}
-                        
-                        echo ""
-                        echo "======================================"
-                        echo " DEPLOYMENT FAILED"
-                        echo "======================================"
-                        echo "Service: ${params.SERVICE_NAME}"
-                        echo "Build: ${BUILD_NUMBER}"
-                        echo ""
-                        echo "=== DEBUGGING INFORMATION ==="
-                        echo ""
-                        echo "1. Kubectl version:"
-                        kubectl version --client 2>/dev/null || echo "kubectl not available"
-                        
-                        echo ""
-                        echo "2. AWS Identity:"
-                        aws sts get-caller-identity 2>/dev/null || echo "AWS credentials not available"
-                        
-                        echo ""
-                        echo "3. Cluster nodes:"
-                        kubectl get nodes 2>/dev/null || echo "Cannot connect to cluster"
-                        
-                        echo ""
-                        echo "4. All pods in default namespace:"
-                        kubectl get pods -n default 2>/dev/null || echo "Cannot retrieve pods"
-                        
-                        echo ""
-                        echo "5. Recent events:"
-                        kubectl get events -n default --sort-by='.lastTimestamp' 2>/dev/null | tail -10 || echo "Cannot retrieve events"
-                        
-                        echo ""
-                        echo "======================================"
-                    """
-                }
-            }
-        }
-        
-        always {
-            sh 'docker system prune -f || true'
-        }
-    }
-}
-
-// Helper function to get deployment name from service name
-def getDeploymentName(serviceName) {
-    def deploymentMap = [
-        'productservice': 'product-deployment',
-        'orderservice': 'order-deployment',
-        'inventoryservice': 'inventory-deployment',
-        'gatewayservice': 'gateway-deployment',
-        'paymentservice': 'payment-deployment',
-        'postgresservice': 'postgres-deployment'
-    ]
-    return deploymentMap[serviceName] ?: 'unknown-deployment'
-}
+            echo " Pipeline failed for ${params.SERVICE_NAME}"
