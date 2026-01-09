@@ -1,0 +1,96 @@
+pipeline {
+    agent any
+
+    parameters {
+        choice(
+            name: 'SERVICE_NAME',
+            choices: [
+                'productservice',
+                'orderservice',
+                'inventoryservice',
+                'gatewayservice',
+                'paymentservice'
+            ],
+            description: 'Select the microservice to build and deploy'
+        )
+    }
+
+    environment {
+        AWS_REGION     = "us-east-1"
+        AWS_ACCOUNT_ID = "851725399330"
+
+        ECR_REPO = "${SERVICE_NAME}"
+        ECR_URI  = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${SERVICE_NAME}"
+
+        GIT_REPO  = "miniprojetDevops"
+        GIT_USER  = "boutheynaaa"
+        GIT_EMAIL = "melissasaraboulsan@gmail.com"
+
+        YAML_FILE = "${SERVICE_NAME}.yaml"
+    }
+
+    stages {
+
+        stage('Clean Workspace') {
+            steps {
+                cleanWs()
+            }
+        }
+
+        stage('Checkout from Git') {
+            steps {
+                git branch: 'master',
+                    url: "https://github.com/${GIT_USER}/${GIT_REPO}.git"
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                dir("src/${SERVICE_NAME}") {
+                    sh '''
+                        docker system prune -f
+                        docker build -t ${ECR_REPO}:latest .
+                    '''
+                }
+            }
+        }
+
+        stage('Login to ECR') {
+            steps {
+                sh '''
+                    aws ecr get-login-password --region ${AWS_REGION} \
+                    | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
+                '''
+            }
+        }
+
+        stage('Tag & Push Image to ECR') {
+            steps {
+                sh '''
+                    docker tag ${ECR_REPO}:latest ${ECR_URI}:${BUILD_NUMBER}
+                    docker push ${ECR_URI}:${BUILD_NUMBER}
+                '''
+            }
+        }
+
+        stage('Update Kubernetes Manifest') {
+            steps {
+                dir('kubernetes-files') {
+                    withCredentials([string(credentialsId: 'my-git-pattoken', variable: 'GIT_TOKEN')]) {
+
+                        sh '''
+                            git config user.email "${GIT_EMAIL}"
+                            git config user.name "${GIT_USER}"
+
+                            sed -i "s#image:.*#image: ${ECR_URI}:${BUILD_NUMBER}#g" ${YAML_FILE}
+
+                            git add ${YAML_FILE}
+                            git commit -m "Update ${SERVICE_NAME} image to ${BUILD_NUMBER}"
+                            git push https://${GIT_TOKEN}@github.com/${GIT_USER}/${GIT_REPO}.git master
+                        '''
+                    }
+                }
+            }
+        }
+    }
+}
