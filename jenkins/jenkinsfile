@@ -24,7 +24,7 @@ pipeline {
 
         GIT_REPO  = "miniprojetDevops"
         GIT_USER  = "boutheynaaa"
-        GIT_EMAIL = "melissasaraboulsan@gmail.com"
+        GIT_EMAIL = "boutheynahammami@gmail.com "
 
         YAML_FILE = "${SERVICE_NAME}.yaml"
     }
