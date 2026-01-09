@@ -4,17 +4,11 @@ provider "aws" {
 
 locals {
   services = [
-    "emailservice",
-    "checkoutservice",
-    "recommendationservice",
-    "frontend",
+    "productservice",
+    "orderservice",
+    "inventoryservice",
+    "gatewayservice",
     "paymentservice",
-    "productcatalogservice",
-    "cartservice",
-    "loadgenerator",
-    "currencyservice",
-    "shippingservice",
-    "adservice"
   ]
 }
 
