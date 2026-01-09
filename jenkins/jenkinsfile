@@ -24,8 +24,9 @@ pipeline {
 
         GIT_REPO  = "miniprojetDevops"
         GIT_USER  = "boutheynaaa"
-        GIT_EMAIL = "boutheynahammami@gmail.com "
+        GIT_EMAIL = "boutheynahammami@gmail.com"
 
+        K8S_DIR   = "kubernetes-files"
         YAML_FILE = "${SERVICE_NAME}.yaml"
     }
 
@@ -48,6 +49,7 @@ pipeline {
             steps {
                 dir("${SERVICE_NAME}") {
                     sh '''
+                        echo "Building Docker image for ${SERVICE_NAME}"
                         docker system prune -f
                         docker build -t ${ECR_REPO}:latest .
                     '''
@@ -58,8 +60,8 @@ pipeline {
         stage('Login to ECR') {
             steps {
                 sh '''
-                    aws ecr get-login-password --region ${AWS_REGION} \
-                    | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
+                    aws ecr get-login-password --region ${AWS_REGION} |
+                    docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
                 '''
             }
         }
@@ -75,18 +77,18 @@ pipeline {
 
         stage('Update Kubernetes Manifest') {
             steps {
-                dir('kubernetes-files') {
+                dir("${K8S_DIR}") {
                     withCredentials([string(credentialsId: 'my-git-pattoken', variable: 'GIT_TOKEN')]) {
 
                         sh '''
                             git config user.email "${GIT_EMAIL}"
                             git config user.name "${GIT_USER}"
 
-                            sed -i "s#image:.*#image: ${ECR_URI}:${BUILD_NUMBER}#g" ${YAML_FILE}
+                            sed -i "s|image:.*|image: ${ECR_URI}:${BUILD_NUMBER}|g" ${YAML_FILE}
 
                             git add ${YAML_FILE}
                             git commit -m "Update ${SERVICE_NAME} image to ${BUILD_NUMBER}"
-                            git push https://${GIT_TOKEN}@github.com/${GIT_USER}/${GIT_REPO}.git master
+                            git push https://${GIT_TOKEN}@github.com/${GIT_USER}/${GIT_REPO}.git main
                         '''
                     }
                 }
