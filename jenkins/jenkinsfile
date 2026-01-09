@@ -5,11 +5,11 @@ pipeline {
         choice(
             name: 'SERVICE_NAME',
             choices: [
-                'productservice',
-                'orderservice',
-                'inventoryservice',
-                'gatewayservice',
-                'paymentservice'
+                'product',
+                'order',
+                'inventory',
+                'gateway',
+                'payment'
             ],
             description: 'Select the microservice to build and deploy'
         )
@@ -46,7 +46,7 @@ pipeline {
 
         stage('Build Docker Image') {
             steps {
-                dir("src/${SERVICE_NAME}") {
+                dir("${SERVICE_NAME}") {
                     sh '''
                         docker system prune -f
                         docker build -t ${ECR_REPO}:latest .
