@@ -11,7 +11,7 @@ pipeline {
 
     environment {
         // Nom de ton bucket S3 pour l'état Terraform
-        TF_BACKEND_BUCKET = "lab-terraform-state"
+        TF_BACKEND_BUCKET = "ml-lab-terraform-state"
         TF_REGION        = "us-east-1"
         TERRAFORM_DIR    = "ecr-terraform"  // dossier contenant tes fichiers Terraform
     }
