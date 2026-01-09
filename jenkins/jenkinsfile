@@ -17,10 +17,10 @@ pipeline {
     environment {
         AWS_REGION     = "us-east-1"
         AWS_ACCOUNT_ID = "851725399330"
-        GIT_REPO  = "miniprojetDevops"
-        GIT_USER  = "boutheynaaa"
-        GIT_EMAIL = "boutheynahammami@gmail.com"
-        K8S_DIR = "k8s"
+        GIT_REPO       = "miniprojetDevops"
+        GIT_USER       = "boutheynaaa"
+        GIT_EMAIL      = "boutheynahammami@gmail.com"
+        K8S_DIR        = "k8s"
     }
     stages {
         stage('Clean Workspace') {
@@ -28,12 +28,14 @@ pipeline {
                 cleanWs()
             }
         }
+        
         stage('Checkout from Git') {
             steps {
                 git branch: 'main',
                     url: "https://github.com/${GIT_USER}/${GIT_REPO}.git"
             }
         }
+        
         stage('Build Docker Image') {
             steps {
                 script {
@@ -50,6 +52,7 @@ pipeline {
                 }
             }
         }
+        
         stage('Login to ECR') {
             steps {
                 sh '''
@@ -60,6 +63,7 @@ pipeline {
                 '''
             }
         }
+        
         stage('Tag & Push Image to ECR') {
             steps {
                 sh '''
@@ -70,6 +74,7 @@ pipeline {
                 '''
             }
         }
+        
         stage('Update Kubernetes Manifest') {
             steps {
                 dir("${K8S_DIR}") {
@@ -104,10 +109,47 @@ pipeline {
                 }
             }
         }
+        
+        stage('Deploy to Kubernetes') {
+            steps {
+                script {
+                    // Get the deployment name based on service
+                    def deploymentName = getDeploymentName(params.SERVICE_NAME)
+                    
+                    sh """
+                        set -e
+                        echo "Deploying ${params.SERVICE_NAME} to Kubernetes..."
+                        
+                        # Apply the updated manifest
+                        kubectl apply -f ${K8S_DIR}/${params.SERVICE_NAME}.yaml
+                        
+                        # Wait for rollout to complete (only for deployments, not services)
+                        if [ "${deploymentName}" != "none" ]; then
+                            echo "Waiting for deployment ${deploymentName} to complete..."
+                            kubectl rollout status deployment/${deploymentName} -n default --timeout=5m
+                            
+                            # Show the current pods
+                            echo "Current pods:"
+                            kubectl get pods -l app=${deploymentName%-deployment} -n default
+                        fi
+                        
+                        echo "Deployment completed successfully!"
+                    """
+                }
+            }
+        }
     }
+    
     post {
         success {
             echo " Pipeline completed successfully for ${params.SERVICE_NAME}"
+            script {
+                sh """
+                    echo "=== Deployment Summary ==="
+                    kubectl get pods -n default | grep ${params.SERVICE_NAME%-service} || true
+                    kubectl get svc -n default | grep ${params.SERVICE_NAME%-service} || true
+                """
+            }
         }
         failure {
             echo " Pipeline failed for ${params.SERVICE_NAME}"
@@ -116,4 +158,17 @@ pipeline {
             sh 'docker system prune -f || true'
         }
     }
+}
+
+// Helper function to get deployment name from service name
+def getDeploymentName(serviceName) {
+    def deploymentMap = [
+        'productservice': 'product-deployment',
+        'orderservice': 'order-deployment',
+        'inventoryservice': 'inventory-deployment',
+        'gatewayservice': 'gateway-deployment',
+        'paymentservice': 'payment-deployment',
+        'postgresservice': 'postgres-deployment'
+    ]
+    return deploymentMap[serviceName] ?: 'none'
 }
