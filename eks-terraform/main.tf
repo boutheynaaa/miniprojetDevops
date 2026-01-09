@@ -49,7 +49,7 @@ data "aws_security_group" "selected" {
 # ----------------------------
 # EKS Cluster
 # ----------------------------
-resource "aws_eks_cluster" "eks" {
+resource "aws_eks_clusterr" "eks" {
   name     = "MyCluster"
   role_arn = data.aws_iam_role.master.arn
 
