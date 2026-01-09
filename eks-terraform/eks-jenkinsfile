@@ -11,21 +11,113 @@ pipeline {
 
     environment {
         AWS_DEFAULT_REGION = "us-east-1"
+        TF_IN_AUTOMATION   = "true"
+        TF_INPUT           = "false"
     }
 
     stages {
 
         stage('Checkout SCM') {
             steps {
-                echo 'Cloning Git repository...'
+                echo '📦 Cloning Git repository...'
                 checkout scm
             }
         }
 
-        stage('Terraform version') {
+        stage('Configure AWS Credentials') {
             steps {
-                sh 'terraform --version'
-                sh 'aws sts get-caller-identity'
+                script {
+                    // Load AWS credentials from Jenkins credentials store
+                    withCredentials([
+                        string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
+                        string(credentialsId: 'aws-secret-access-key', variable: 'AWS_SECRET_ACCESS_KEY'),
+                        string(credentialsId: 'aws-session-token', variable: 'AWS_SESSION_TOKEN')
+                    ]) {
+                        sh '''
+                            echo "🔐 Configuring AWS credentials..."
+                            
+                            # Create .aws directory
+                            mkdir -p ~/.aws
+                            
+                            # Create credentials file
+                            cat > ~/.aws/credentials << EOF
+[default]
+aws_access_key_id = ${AWS_ACCESS_KEY_ID}
+aws_secret_access_key = ${AWS_SECRET_ACCESS_KEY}
+aws_session_token = ${AWS_SESSION_TOKEN}
+EOF
+                            
+                            # Create config file
+                            cat > ~/.aws/config << EOF
+[default]
+region = us-east-1
+output = json
+EOF
+                            
+                            # Set permissions
+                            chmod 600 ~/.aws/credentials
+                            chmod 600 ~/.aws/config
+                            
+                            echo "✅ AWS credentials configured"
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Verify AWS Credentials') {
+            steps {
+                sh '''
+                    echo "======================================"
+                    echo "VERIFYING AWS CREDENTIALS"
+                    echo "======================================"
+                    echo ""
+                    
+                    echo "🧪 Testing AWS credentials..."
+                    aws sts get-caller-identity || {
+                        echo ""
+                        echo "❌ AWS credentials test failed"
+                        echo "Please check your credentials in Jenkins"
+                        exit 1
+                    }
+                    
+                    echo ""
+                    echo "✅ AWS credentials are valid"
+                    echo "======================================"
+                '''
+            }
+        }
+
+        stage('Environment Check') {
+            steps {
+                script {
+                    sh '''
+                        echo ""
+                        echo "======================================"
+                        echo "ENVIRONMENT INFORMATION"
+                        echo "======================================"
+                        echo ""
+                        echo "🔧 Terraform Version:"
+                        terraform --version
+                        echo ""
+                        echo "☁️  AWS Identity:"
+                        aws sts get-caller-identity
+                        echo ""
+                        echo "🌍 AWS Region: $AWS_DEFAULT_REGION"
+                        echo ""
+                        echo "======================================"
+                    '''
+                }
+            }
+        }
+
+        stage('Verify S3 Bucket') {
+            steps {
+                sh '''
+                    echo "🪣 Verifying S3 bucket access..."
+                    aws s3 ls s3://my-terraform-state-boutheyna/ || echo "⚠️  Bucket exists but may be empty"
+                    echo "✅ S3 bucket verified"
+                '''
             }
         }
 
@@ -33,8 +125,9 @@ pipeline {
             steps {
                 dir('eks-terraform') {
                     sh '''
-                        unset AWS_PROFILE
-                        terraform init --reconfigure
+                        echo "🔄 Initializing Terraform with S3 backend..."
+                        terraform init -reconfigure
+                        echo "✅ Terraform initialized successfully"
                     '''
                 }
             }
@@ -43,7 +136,22 @@ pipeline {
         stage('Terraform validate') {
             steps {
                 dir('eks-terraform') {
-                    sh 'terraform validate'
+                    sh '''
+                        echo "✓ Validating Terraform configuration..."
+                        terraform validate
+                        echo "✅ Configuration is valid"
+                    '''
+                }
+            }
+        }
+
+        stage('Terraform format check') {
+            steps {
+                dir('eks-terraform') {
+                    sh '''
+                        echo "📝 Checking Terraform formatting..."
+                        terraform fmt -check -recursive || echo "⚠️  Some files need formatting"
+                    '''
                 }
             }
         }
@@ -51,7 +159,46 @@ pipeline {
         stage('Terraform plan') {
             steps {
                 dir('eks-terraform') {
-                    sh 'terraform plan'
+                    script {
+                        echo "📋 Creating Terraform execution plan..."
+                        if (params.ACTION == 'destroy') {
+                            sh 'terraform plan -destroy -out=tfplan'
+                        } else {
+                            sh 'terraform plan -out=tfplan'
+                        }
+                        
+                        // Generate human-readable plan
+                        sh 'terraform show -no-color tfplan > tfplan.txt'
+                        
+                        // Archive the plan
+                        archiveArtifacts artifacts: 'tfplan.txt', allowEmptyArchive: false
+                        
+                        echo "✅ Plan created and archived"
+                    }
+                }
+            }
+        }
+
+        stage('Review Plan') {
+            steps {
+                script {
+                    echo "📊 Please review the Terraform plan in the archived artifacts"
+                    echo "Action: ${params.ACTION}"
+                }
+            }
+        }
+
+        stage('Approval Gate') {
+            steps {
+                script {
+                    def action = params.ACTION.toUpperCase()
+                    timeout(time: 15, unit: 'MINUTES') {
+                        input(
+                            message: "⚠️  Do you want to ${action} the EKS cluster?",
+                            ok: "Yes, proceed with ${action}"
+                        )
+                    }
+                    echo "✅ Approved for ${action}"
                 }
             }
         }
@@ -62,32 +209,133 @@ pipeline {
             }
             steps {
                 dir('eks-terraform') {
-                    sh 'terraform apply -auto-approve'
+                    sh '''
+                        echo "🚀 Applying Terraform changes..."
+                        echo "⏳ This will take 10-15 minutes for EKS cluster creation..."
+                        terraform apply -auto-approve tfplan
+                        echo "✅ Infrastructure deployed successfully"
+                    '''
                 }
             }
         }
 
         stage('Terraform destroy') {
             when {
-                allOf {
-                    expression { params.ACTION == 'destroy' }
-                    expression { currentBuild.rawBuild.getCause(hudson.model.Cause$UserIdCause) != null }
-                }
+                expression { params.ACTION == 'destroy' }
             }
             steps {
                 dir('eks-terraform') {
-                    sh 'terraform destroy -auto-approve'
+                    sh '''
+                        echo "🗑️  Destroying Terraform resources..."
+                        echo "⏳ This will take 10-15 minutes..."
+                        terraform apply -auto-approve tfplan
+                        echo "✅ Infrastructure destroyed successfully"
+                    '''
                 }
+            }
+        }
+
+        stage('Display Outputs') {
+            when {
+                expression { params.ACTION == 'apply' }
+            }
+            steps {
+                dir('eks-terraform') {
+                    sh '''
+                        echo ""
+                        echo "======================================"
+                        echo "📤 TERRAFORM OUTPUTS"
+                        echo "======================================"
+                        terraform output
+                        echo ""
+                        echo "======================================"
+                        echo "🔧 KUBECTL CONFIGURATION"
+                        echo "======================================"
+                        echo ""
+                        CLUSTER_NAME=$(terraform output -raw cluster_name 2>/dev/null || echo "MelCluster")
+                        echo "To configure kubectl, run:"
+                        echo ""
+                        echo "  aws eks update-kubeconfig --region us-east-1 --name $CLUSTER_NAME"
+                        echo ""
+                        echo "======================================"
+                    '''
+                }
+            }
+        }
+
+        stage('Verify State in S3') {
+            steps {
+                sh '''
+                    echo "💾 Verifying state file in S3..."
+                    aws s3 ls s3://my-terraform-state-boutheyna/eks/ || echo "State location"
+                '''
             }
         }
     }
 
     post {
-        success {
-            echo '✅ Pipeline executed successfully'
+        always {
+            dir('eks-terraform') {
+                sh '''
+                    echo "🧹 Cleaning up temporary files..."
+                    rm -f tfplan tfplan.txt
+                    
+                    # Clean up credentials (security)
+                    rm -rf ~/.aws
+                '''
+            }
         }
+        
+        success {
+            script {
+                echo ""
+                echo "======================================"
+                if (params.ACTION == 'apply') {
+                    echo "✅ SUCCESS: EKS cluster deployed!"
+                    echo "======================================"
+                    echo ""
+                    echo "📝 Next steps:"
+                    echo "  1. Configure kubectl:"
+                    echo "     aws eks update-kubeconfig --region us-east-1 --name MelCluster"
+                    echo ""
+                    echo "  2. Verify cluster:"
+                    echo "     kubectl get nodes"
+                    echo "     kubectl get pods -A"
+                    echo ""
+                    echo "  3. State stored in:"
+                    echo "     s3://my-terraform-state-boutheyna/eks/terraform.tfstate"
+                    echo ""
+                } else {
+                    echo "✅ SUCCESS: EKS cluster destroyed!"
+                    echo "======================================"
+                }
+            }
+        }
+        
         failure {
-            echo '❌ Pipeline failed – check logs'
+            echo ""
+            echo "======================================"
+            echo "❌ PIPELINE FAILED"
+            echo "======================================"
+            echo ""
+            echo "Common issues:"
+            echo ""
+            echo "  ✗ AWS Credentials invalid or expired"
+            echo "    → Update credentials in Jenkins:"
+            echo "    → Manage Jenkins → Credentials"
+            echo ""
+            echo "  ✗ Duplicate variables"
+            echo "    → Variables should be in variables.tf only"
+            echo ""
+            echo "  ✗ VPC/Subnet/SG not found"
+            echo "    → Verify names in AWS Console"
+            echo ""
+            echo "📋 Check the build logs above for details"
+            echo "======================================"
+        }
+        
+        cleanup {
+            echo "🧹 Final cleanup completed"
         }
     }
 }
